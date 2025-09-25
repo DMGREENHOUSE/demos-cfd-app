@@ -1,8 +1,10 @@
 
 # demos-cfd-app
 
-CSV-only Streamlit app for synthetic CFD-like datasets with ANSYS-style inputs.
+Streamlit app for synthetic CFD-like csv datasets.
 
+Run app here: [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cfd-demo.streamlit.app/)
+ 
 **Units:**
 - turbulence_intensity [%]
 - inlet_temperature [K]
