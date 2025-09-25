@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Streamlit cache
+.streamlit/cache/
+.streamlit/state/
+
+# Data generated in workshops
+data/generated/
+*.csv
+
+# Packaging / build
+DS_Store
+.DS_Store
+dist/
+build/
+*.egg-info/

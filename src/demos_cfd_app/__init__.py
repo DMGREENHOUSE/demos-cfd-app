@@ -1,3 +1,1 @@
-
-# demos_cfd_app package
-__all__ = ["synthetic_model", "dataset"]
+__all__ = ['synthetic_model','dataset']

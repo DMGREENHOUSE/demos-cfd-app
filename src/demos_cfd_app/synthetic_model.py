@@ -4,71 +4,70 @@ import numpy as np
 import pandas as pd
 from typing import Tuple, List, Optional
 
+def _col(X: pd.DataFrame, name: str, default: float = None) -> np.ndarray:
+    if name in X.columns:
+        return X[name].to_numpy().astype(float).reshape(-1)
+    if default is None:
+        return np.zeros((len(X),), dtype=float)
+    return np.full((len(X),), float(default), dtype=float)
+
 def compute_velocity_profiles(
     X: pd.DataFrame,
     *,
     M: int,
-    primary_var: str,
-    plateaus_on: bool,
-    plateau_low: Tuple[float, float],
-    plateau_high: Tuple[float, float],
-    transition_center: float,
-    transition_width: float,
-    spatial_amp1: float,
-    spatial_amp2: float,
-    interaction_strength: float,
-    noise_low: float,
-    noise_mid: float,
-    noise_high: float,
-    rng: np.random.Generator,
+    spatial_amp1: float = 0.15,
+    spatial_amp2: float = 0.10,
+    interaction_strength: float = 0.10,
+    noise_low: float = 0.0,
+    noise_mid: float = 0.0,
+    noise_high: float = 0.0,
+    rng: np.random.Generator = None,
 ) -> pd.DataFrame:
     """
-    Synthetic CFD-like velocity profiles u_0..u_{M-1} as a function of inputs X.
-    - 'primary_var' drives a tanh transition between low/high plateaus.
-    - Other variables apply a mild linear scale interaction.
-    - Heteroscedastic noise is larger near the transition.
+    Synthetic CFD-like velocity profiles with simple, reasonable dependencies on ANSYS-style inputs.
     """
-    assert primary_var in X.columns, "primary_var must be one of the input columns"
-    v = X[primary_var].to_numpy().astype(float).reshape(-1)
+    N = len(X)
+    if rng is None:
+        rng = np.random.default_rng(42)
 
-    # Smooth transition (low -> high) across primary_var
-    t = 0.5 * (1.0 + np.tanh((v - transition_center) / max(1e-9, transition_width)))
-    low_val, high_val = 0.4, 1.0
-    core = (1 - t) * low_val + t * high_val  # (N,)
+    U_in = _col(X, "inlet_velocity", default=10.0)          # m/s
+    P_out = _col(X, "outlet_pressure", default=0.0)         # Pa
+    k_s = _col(X, "wall_roughness", default=0.0)            # mm
+    TI = _col(X, "turbulence_intensity", default=5.0)       # %
+    T_in = _col(X, "inlet_temperature", default=300.0)      # K
 
-    # Spatial structure for M outputs
+    # Nonlinear saturation with inlet velocity (mimics regime change)
+    U_mid = np.maximum(1.0, np.median(U_in))
+    U_core = np.tanh(U_in / (0.6 * U_mid + 1e-9))  # 0..~1
+
+    # Effects
+    beta_p = 0.35
+    backpressure = np.clip(1.0 - beta_p * (P_out / 1e5), 0.4, 1.1)
+
+    gamma_r = 0.6
+    # k_s is in mm; treat 1.0 mm as strong roughness
+    rough_scale = np.clip(1.0 - gamma_r * (k_s / 1.0), 0.5, 1.0)
+
+    eta_T = 0.10
+    temp_scale = 1.0 - eta_T * ((T_in - 300.0) / 100.0)
+
+    mag = np.clip(U_core * backpressure * rough_scale * temp_scale, 0.0, None)
+
     xloc = np.linspace(0.05, 0.95, M).reshape(1, -1)
-    spatial = 1.0 + spatial_amp1 * np.sin(2 * np.pi * xloc) + spatial_amp2 * np.cos(4 * np.pi * xloc)
-    base = core.reshape(-1, 1) * spatial  # (N, M)
+    damp_TI = np.clip(1.0 - 0.8 * (TI / 20.0), 0.2, 1.0).reshape(-1, 1)
+    spatial = 1.0 + damp_TI * (spatial_amp1 * np.sin(2 * np.pi * xloc) + spatial_amp2 * np.cos(4 * np.pi * xloc))
 
-    # Plateaus: clamp within given bands
-    if plateaus_on:
-        mask_low = (v >= min(*plateau_low)) & (v <= max(*plateau_low))
-        mask_high = (v >= min(*plateau_high)) & (v <= max(*plateau_high))
-        if mask_low.any():
-            base[mask_low] = base[mask_low][0]
-        if mask_high.any():
-            base[mask_high] = base[mask_high][0]
+    base = mag.reshape(-1, 1) * spatial
 
-    # Linear interaction from other variables (normalized [-0.5, 0.5])
-    extra_cols = [c for c in X.columns if c != primary_var]
-    if extra_cols and interaction_strength != 0.0:
-        effects = np.zeros((len(X), 1))
-        for c in extra_cols:
-            arr = X[c].to_numpy().astype(float).reshape(-1)
-            a, b = float(np.nanmin(arr)), float(np.nanmax(arr))
-            norm = (arr - a) / (b - a) - 0.5 if b > a else np.zeros_like(arr)
-            effects += interaction_strength * norm.reshape(-1, 1)
-        base = base * (1.0 + effects)
-
-    # Heteroscedastic noise: bump near transition + light tail
-    std = np.full_like(v, noise_low, dtype=float)
-    std += (noise_mid - noise_low) * np.exp(-0.5 * ((v - transition_center) / max(1e-9, transition_width)) ** 2)
-    denom = (v.max() - v.min() + 1e-9)
-    std += noise_high * ((v - v.min() + 1e-9) / denom) ** 0.25
-
-    noise = rng.normal(size=base.shape) * std.reshape(-1, 1)
-    Y = base + noise
+    # Noise support (defaults to zero)
+    if (noise_low > 0) or (noise_mid > 0) or (noise_high > 0):
+        std = np.full((N,), noise_low, dtype=float)
+        std += (noise_mid - noise_low) * np.exp(-0.5 * ((U_in - U_mid) / (0.3 * (np.std(U_in) + 1e-9))) ** 2)
+        std += noise_high * ((U_in - U_in.min() + 1e-9) / (U_in.max() - U_in.min() + 1e-9)) ** 0.25
+        noise = rng.normal(size=base.shape) * std.reshape(-1, 1)
+        Y = base + noise
+    else:
+        Y = base
 
     cols = [f"u_{i}" for i in range(M)]
     return pd.DataFrame(Y, columns=cols)
