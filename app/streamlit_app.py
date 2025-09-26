@@ -67,6 +67,14 @@ def apply_branding():
     """
     st.markdown(BRAND_CSS, unsafe_allow_html=True)
     st.session_state["_branding_injected"] = True
+UNITS = {
+    "wall_roughness": "mm",
+    "turbulence_intensity": "%",
+    "inlet_temperature": "K",
+    "inlet_velocity": "m/s",
+    "outlet_pressure": "Pa",
+}
+for i in range(100): UNITS[f"u_{i}"] = "Norm."
 
 @st.cache_data(show_spinner=False)
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -152,8 +160,18 @@ def preview_and_download(key_prefix: str, default_prefix: str):
             with coly: y_var = st.selectbox("Y axis (output variable)", list(y.columns), key=f"{key_prefix}_plot_y")
             plot_df = pd.DataFrame({x_var: X[x_var].to_numpy(), y_var: y[y_var].to_numpy()})
             try:
-                chart = (alt.Chart(plot_df).mark_circle(size=64, color=INDIGO).encode(x=alt.X(x_var), y=alt.Y(y_var), tooltip=[x_var, y_var]).interactive())
-                st.altair_chart(chart, use_container_width=True)
+                chart = (
+                    alt.Chart(plot_df)
+                    .mark_circle(size=64, color=INDIGO)
+                    .encode(
+                        x=alt.X(x_var, title=f"{x_var} [{UNITS.get(x_var, '')}]"),
+                        y=alt.Y(y_var, title=f"{y_var} [{UNITS.get(y_var, '')}]"),
+                        tooltip=[x_var, y_var],
+                    )
+                    .interactive()
+                    .properties(width=400, height=400)
+                )
+                st.altair_chart(chart, use_container_width=False)
             except Exception:
                 st.scatter_chart(plot_df, x=x_var, y=y_var, use_container_width=True)
             st.markdown("### Download")
@@ -256,6 +274,6 @@ with st.expander("Parameters & Units (summary)", expanded=False):
         {"Parameter": "inlet_temperature", "Units": "K"},
         {"Parameter": "inlet_velocity", "Units": "m/s"},
         {"Parameter": "outlet_pressure", "Units": "Pa"},
-        {"Parameter": "u_0 .. u_{M-1}", "Units": "m/s"},
+        {"Parameter": "u_0 .. u_{M-1}", "Units": "[Norm.]"},
     ])
     st.table(units_df)
